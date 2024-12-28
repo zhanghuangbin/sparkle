@@ -5,7 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"github.com/thoas/go-funk"
+	"golang.org/x/text/encoding/simplifiedchinese"
+	"golang.org/x/text/transform"
+	"io"
+	"log"
 	"os"
+	"runtime"
 	"strings"
 )
 import "os/exec"
@@ -56,7 +61,7 @@ func New(osType OSType, global bool) (Env, error) {
 }
 
 func (env WinEnv) Apply(alias Alias) error {
-	oldVal, err := getPersistEnvVar(alias.Key)
+	oldVal, err := getPersistEnvVar(env.global, alias.Key)
 	if err != nil {
 		return err
 	}
@@ -91,25 +96,42 @@ func (env WinEnv) Apply(alias Alias) error {
 	return nil
 }
 
-func getPersistEnvVar(key string) (val string, err error) {
+func getPersistEnvVar(global bool, key string) (val string, err error) {
 	if key == "" {
-		return "", errors.New("key is empty")
+		return "", errors.New(fmt.Sprintf("key %s is empty", key))
 	}
 
-	formatKey := "%" + key + "%"
-	// FIXME 获取到的新的shell的值，存在bug
-	_, val, err = doExec("cmd.exe ", "/c", "echo", formatKey)
+	args := []string{"query"}
+	if global {
+		args = append(args, "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment")
+	} else {
+		args = append(args, "HKEY_CURRENT_USER\\Environment")
+	}
+	args = append(args, "/v", key)
+
+	_, val, err = doExec("reg", args...)
 	if err != nil {
+		if strings.Contains(val, "系统找不到指定的注册表项或值") {
+			return "", nil
+		}
 		return "", err
 	}
-	if val == formatKey+"\r\n" {
-		return "", nil
-	}
 
-	if strings.LastIndex(val, "\r\n") != -1 {
-		val = val[:strings.LastIndex(val, "\r\n")]
+	lines := strings.Split(val, "\r\n")
+	targetLine := ""
+	for _, line := range lines {
+		line = strings.TrimLeft(line, " ")
+		if strings.HasPrefix(line, key) {
+			targetLine = line
+			break
+		}
 	}
-	return
+	if targetLine == "" {
+		return "", nil
+	} else {
+		tripleParts := strings.Split(targetLine, "    ")
+		return tripleParts[2], nil
+	}
 }
 
 func appendOldEnvVal(oldVal string, newVal string) string {
@@ -132,15 +154,42 @@ func appendOldEnvVal(oldVal string, newVal string) string {
 func doExec(cmd string, args ...string) (int, string, error) {
 	command := exec.Command(cmd, args...)
 
+	log.Printf("exec: %s %s\n", cmd, strings.Join(args, " "))
+
 	var out bytes.Buffer
 	command.Stdout = &out
 	command.Stderr = &out
+
 	if err := command.Run(); err != nil {
+		result, err1 := normalExecResult(out)
+		if err1 != nil {
+			return -1, "", err1
+		}
 		if exiterr, ok := err.(*exec.ExitError); ok {
-			return exiterr.ExitCode(), out.String(), err
+			return exiterr.ExitCode(), result, errors.New(err.Error() + "," + result)
 		} else {
-			return -1, out.String(), err
+			return -1, result, err
 		}
 	}
-	return 0, out.String(), nil
+
+	result, err := normalExecResult(out)
+	if err != nil {
+		return -1, "", err
+	}
+	return 0, result, nil
+}
+
+func normalExecResult(out bytes.Buffer) (string, error) {
+	if runtime.GOOS == "windows" {
+		reader := transform.NewReader(bytes.NewBuffer(out.Bytes()), simplifiedchinese.GBK.NewDecoder())
+		output, err := io.ReadAll(reader)
+		if err != nil {
+			return out.String(), err
+		}
+
+		// 打印转换后的UTF-8编码输出结果
+		return string(output), nil
+	} else {
+		return out.String(), nil
+	}
 }

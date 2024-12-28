@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/atotto/clipboard"
 	"github.com/thoas/go-funk"
 	"golang.org/x/text/encoding/simplifiedchinese"
 	"golang.org/x/text/transform"
@@ -86,12 +87,24 @@ func (env WinEnv) Apply(alias Alias) error {
 	}
 	fmt.Fprintf(os.Stdout, "set %s env:%s successfully, newVal: \n\t%s \noldVal: \n\t%s\n", globalDesc, alias.Key, newVal, oldVal)
 
-	// 更新当前shell的环境变量
-	// FIXME 无法更新当前shell的环境变量
-	if _, _, err := doExec("cmd", "/c", "set", fmt.Sprintf("%s=%s", alias.Key, newVal)); err != nil {
-		return err
+	setEnvCmd := fmt.Sprintf("set \"%s\"=\"%s\"", alias.Key, alias.Value)
+	fmt.Fprintf(os.Stdout, fmt.Sprintf(`
+----------------------------------------------------------
+由于系统限制，无法在修改当前shell的环境变量，请复制以下命令到当前shell中执行。
+`))
+
+	if err := clipboard.WriteAll(setEnvCmd); err == nil {
+		fmt.Fprintf(os.Stdout, `
+      命令已复制到剪贴板，可直接粘贴到当前shell中执行！
+`)
 	}
-	fmt.Fprintf(os.Stdout, "set shell variable:%s successfully, newVal: \n\t%s \noldVal: \n\t%s\n", alias.Key, newVal, oldVal)
+
+	fmt.Fprintf(os.Stdout, "\n\n\t%s\n\n", setEnvCmd)
+
+	fmt.Fprintf(os.Stdout, `
+
+----------------------------------------------------------
+`)
 
 	return nil
 }

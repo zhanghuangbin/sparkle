@@ -21,7 +21,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/zhanghuangbin/sparkle/meta"
-	"runtime"
 )
 
 var (
@@ -45,11 +44,7 @@ var envCmd = &cobra.Command{
 			return errors.New(fmt.Sprintf("别名%s不存在", args[0]))
 		}
 
-		pType, _ := meta.OfOSType(runtime.GOOS)
-		env, err := meta.New(pType, global)
-		if err != nil {
-			return err
-		}
+		env := meta.New(global)
 
 		if err := env.Apply(*alias); err != nil {
 			return err
